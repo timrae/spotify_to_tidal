@@ -59,7 +59,7 @@ def artist_match(tidal_track, spotify_track):
         return set([simple(x.strip().lower()) for x in result])
     # There must be at least one overlapping artist between the Tidal and Spotify track
     return get_tidal_artists(tidal_track).intersection(get_spotify_artists(spotify_track)) != set()
-  
+
 def match(tidal_track, spotify_track):
     return duration_match(tidal_track, spotify_track) and name_match(tidal_track, spotify_track) and artist_match(tidal_track, spotify_track)
 
@@ -280,12 +280,13 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--config', default='config.yml', help='location of the config file')
     parser.add_argument('--uri', help='synchronize a specific URI instead of the one in the config')
+    parser.add_argument('--session-dir', default='./', help='location of where session files are stored')
     args = parser.parse_args()
 
     with open(args.config, 'r') as f:
         config = yaml.safe_load(f)
-    spotify_session = open_spotify_session(config['spotify'])
-    tidal_session = open_tidal_session()
+    spotify_session = open_spotify_session(config['spotify'], args.session_dir)
+    tidal_session = open_tidal_session(args.session_dir)
     if not tidal_session.check_login():
         sys.exit("Could not connect to Tidal")
     if args.uri:
