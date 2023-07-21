@@ -91,7 +91,9 @@ def match(tidal_track, spotify_track):
 
 def tidal_search(spotify_track_and_cache, tidal_session):
     spotify_track, cached_tidal_track = spotify_track_and_cache
-    if cached_tidal_track: return cached_tidal_track
+    if cached_tidal_track:
+        cached_tidal_track.cached = True
+        return cached_tidal_track
     # search for album name and first album artist
     if 'album' in spotify_track and 'artists' in spotify_track['album'] and len(spotify_track['album']['artists']):
         album_result = tidal_session.search(simple(spotify_track['album']['name']) + " " + simple(spotify_track['album']['artists'][0]['name']), models=[tidalapi.album.Album])
@@ -100,10 +102,12 @@ def tidal_search(spotify_track_and_cache, tidal_session):
             if len(album_tracks) >= spotify_track['track_number']:
                 track = album_tracks[spotify_track['track_number'] - 1]
                 if match(track, spotify_track):
+                    track.cached = False
                     return track
     # if that fails then search for track name and first artist
     for track in tidal_session.search(simple(spotify_track['name']) + ' ' + simple(spotify_track['artists'][0]['name']), models=[tidalapi.media.Track])['tracks']:
         if match(track, spotify_track):
+            track.cached = False
             return track
 
 def get_tidal_playlists_dict(tidal_session):
@@ -190,6 +194,39 @@ class TidalPlaylistCache:
             else:
                 results.append( (track, None) )
         return (results, cache_hits)
+class TidalFavoritesCache:
+    def __init__(self, tidal_session):
+        self._data = tidal_session.user.favorites.tracks()
+    def _search(self, spotify_track):
+        ''' check if the given spotify track was already in the tidal playlist.'''
+        for tidal_track in self._data:
+            if match(tidal_track, spotify_track):
+                return tidal_track
+        return None
+
+    def search(self, spotify_session):
+        ''' Add the cached tidal track where applicable to a list of spotify tracks '''
+        results = []
+        cache_hits = 0
+        work_to_do = False
+        liked_songs = spotify_session.current_user_saved_tracks()
+        spotify_tracks = []
+        while True:
+            spotify_tracks.extend([r['track'] for r in liked_songs['items'] if r['track'] is not None])
+            # move to the next page of results if there are still tracks remaining in the playlist
+
+            if liked_songs['next']:
+                liked_songs = spotify_session.next(liked_songs)
+            else:
+                break
+        for track in spotify_tracks:
+            cached_track = self._search(track)
+            if cached_track:
+                results.append( (track, cached_track) )
+                cache_hits += 1
+            else:
+                results.append( (track, None) )
+        return (results, cache_hits)
 
 def tidal_playlist_is_dirty(playlist, new_track_ids):
     old_tracks = playlist.tracks()
@@ -241,12 +278,32 @@ def sync_playlist(spotify_session, tidal_session, spotify_id, tidal_id, config):
     else:
         print("No changes to write to Tidal playlist")
 
-def sync_list(spotify_session, tidal_session, playlists, config):
+def sync_liked_songs(spotify_session, tidal_session, config):
+    spotify_tracks, cache_hits = TidalFavoritesCache(tidal_session).search(spotify_session)
+    task_description = "Searching Tidal for {}/{} tracks for all liked songs".format(len(spotify_tracks), len(spotify_tracks))
+    tidal_tracks = call_async_with_progress(tidal_search, spotify_tracks, task_description, config.get('subprocesses', 50), tidal_session=tidal_session)
+
+    # reverse tidal_tracks and spotify_tracks
+    tidal_tracks.reverse()
+    spotify_tracks.reverse()
+    for index, tidal_track in enumerate(tidal_tracks):
+        spotify_track = spotify_tracks[index][0]
+        if tidal_track and not tidal_track.cached:
+            print(f'Liking "{tidal_track.name}" by {tidal_track.artist.name}')
+            tidal_session.user.favorites.add_track(tidal_track.id)
+        else:
+            color = ('\033[91m', '\033[0m')
+            print(color[0] + "Could not find track {}: {} - {}".format(spotify_track['id'], ",".join([a['name'] for a in spotify_track['artists']]), spotify_track['name']) + color[1])
+
+def sync_list(spotify_session, tidal_session, playlists, config, withFavorites= False):
   results = []
   for spotify_id, tidal_id in playlists:
     # sync the spotify playlist to tidal
     repeat_on_request_error(sync_playlist, spotify_session, tidal_session, spotify_id, tidal_id, config)
     results.append(tidal_id)
+  if withFavorites:
+    # sync all favorite spotify songs to tidal
+    repeat_on_exception(sync_liked_songs, spotify_session, tidal_session, config)
   return results
 
 def pick_tidal_playlist_for_spotify_playlist(spotify_playlist, tidal_playlists):
@@ -256,7 +313,7 @@ def pick_tidal_playlist_for_spotify_playlist(spotify_playlist, tidal_playlists):
       return (spotify_playlist['id'], tidal_playlist.id)
     else:
       return (spotify_playlist['id'], None)
-    
+
 
 def get_user_playlist_mappings(spotify_session, tidal_session, config):
   results = []
@@ -290,6 +347,7 @@ if __name__ == '__main__':
     parser = argparse.ArgumentParser()
     parser.add_argument('--config', default='config.yml', help='location of the config file')
     parser.add_argument('--uri', help='synchronize a specific URI instead of the one in the config')
+    parser.add_argument('--notfavs', action='store_true', help="Don't sync favorite songs")
     args = parser.parse_args()
 
     with open(args.config, 'r') as f:
@@ -309,4 +367,4 @@ if __name__ == '__main__':
         sync_list(spotify_session, tidal_session, get_playlists_from_config(config), config)
     else:
         # otherwise just use the user playlists in the Spotify account
-        sync_list(spotify_session, tidal_session, get_user_playlist_mappings(spotify_session, tidal_session, config), config)
+        sync_list(spotify_session, tidal_session, get_user_playlist_mappings(spotify_session, tidal_session, config), config, not args.notfavs)
