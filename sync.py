@@ -38,9 +38,9 @@ def name_match(tidal_track, spotify_track):
         return spotify_has_pattern != tidal_has_pattern
 
     # handle some edge cases
-    if exclusion_rule("instrumental", tidal_track, spotify_track): return False
-    if exclusion_rule("acapella", tidal_track, spotify_track): return False
-    if exclusion_rule("remix", tidal_track, spotify_track): return False
+    for pattern in ConfigHolder.get_config().get("exclusion_rules", []):
+        if exclusion_rule(pattern, tidal_track, spotify_track):
+            return False
 
     # the simplified version of the Spotify track name must be a substring of the Tidal track name
     # Try with both un-normalized and then normalized
@@ -200,7 +200,7 @@ def tidal_playlist_is_dirty(playlist, new_track_ids):
             return True
     return False
 
-def sync_playlist(spotify_session, tidal_session, spotify_id, tidal_id, config):
+def sync_playlist(spotify_session, tidal_session, spotify_id, tidal_id):
     try:
         spotify_playlist = spotify_session.playlist(spotify_id)
     except spotipy.SpotifyException as e:
@@ -227,7 +227,7 @@ def sync_playlist(spotify_session, tidal_session, spotify_id, tidal_id, config):
         return
 
     task_description = "Searching Tidal for {}/{} tracks in Spotify playlist '{}'".format(len(spotify_tracks) - cache_hits, len(spotify_tracks), spotify_playlist['name'])
-    tidal_tracks = call_async_with_progress(tidal_search, spotify_tracks, task_description, config.get('subprocesses', 50), tidal_session=tidal_session)
+    tidal_tracks = call_async_with_progress(tidal_search, spotify_tracks, task_description, ConfigHolder.get_config().get('subprocesses', 50), tidal_session=tidal_session)
     for index, tidal_track in enumerate(tidal_tracks):
         spotify_track = spotify_tracks[index][0]
         if tidal_track:
@@ -241,11 +241,11 @@ def sync_playlist(spotify_session, tidal_session, spotify_id, tidal_id, config):
     else:
         print("No changes to write to Tidal playlist")
 
-def sync_list(spotify_session, tidal_session, playlists, config):
+def sync_list(spotify_session, tidal_session, playlists):
   results = []
   for spotify_id, tidal_id in playlists:
     # sync the spotify playlist to tidal
-    repeat_on_request_error(sync_playlist, spotify_session, tidal_session, spotify_id, tidal_id, config)
+    repeat_on_request_error(sync_playlist, spotify_session, tidal_session, spotify_id, tidal_id)
     results.append(tidal_id)
   return results
 
@@ -258,22 +258,22 @@ def pick_tidal_playlist_for_spotify_playlist(spotify_playlist, tidal_playlists):
       return (spotify_playlist['id'], None)
     
 
-def get_user_playlist_mappings(spotify_session, tidal_session, config):
+def get_user_playlist_mappings(spotify_session, tidal_session):
   results = []
-  spotify_playlists = get_playlists_from_spotify(spotify_session, config)
+  spotify_playlists = get_playlists_from_spotify(spotify_session)
   tidal_playlists = get_tidal_playlists_dict(tidal_session)
   for spotify_playlist in spotify_playlists:
       results.append( pick_tidal_playlist_for_spotify_playlist(spotify_playlist, tidal_playlists) )
   return results
 
-def get_playlists_from_spotify(spotify_session, config):
+def get_playlists_from_spotify(spotify_session):
     # get all the user playlists from the Spotify account
     playlists = []
-    spotify_results = spotify_session.user_playlists(config['spotify']['username'])
-    exclude_list = set([x.split(':')[-1] for x in config.get('excluded_playlists', [])])
+    spotify_results = spotify_session.user_playlists(ConfigHolder.get_config()['spotify']['username'])
+    exclude_list = set([x.split(':')[-1] for x in ConfigHolder.get_config().get('excluded_playlists', [])])
     while True:
         for spotify_playlist in spotify_results['items']:
-            if spotify_playlist['owner']['id'] == config['spotify']['username'] and not spotify_playlist['id'] in exclude_list:
+            if spotify_playlist['owner']['id'] == ConfigHolder.get_config()['spotify']['username'] and not spotify_playlist['id'] in exclude_list:
                 playlists.append(spotify_playlist)
         # move to the next page of results if there are still playlists remaining
         if spotify_results['next']:
@@ -282,9 +282,23 @@ def get_playlists_from_spotify(spotify_session, config):
             break
     return playlists
 
-def get_playlists_from_config(config):
+def get_playlists_from_config():
     # get the list of playlist sync mappings from the configuration file
-    return [(item['spotify_id'], item['tidal_id']) for item in config['sync_playlists']]
+    return [(item['spotify_id'], item['tidal_id']) for item in ConfigHolder.get_config()['sync_playlists']]
+
+class ConfigHolder:
+    _config = None
+
+    @classmethod
+    def load_config(cls, config_file):
+        with open(config_file, "r") as f:
+            cls._config = yaml.safe_load(f)
+
+    @classmethod
+    def get_config(cls):
+        if cls._config is None:
+            raise RuntimeError("Configuration not loaded. Call load_config() first.")
+        return cls._config
 
 if __name__ == '__main__':
     parser = argparse.ArgumentParser()
@@ -292,9 +306,9 @@ if __name__ == '__main__':
     parser.add_argument('--uri', help='synchronize a specific URI instead of the one in the config')
     args = parser.parse_args()
 
-    with open(args.config, 'r') as f:
-        config = yaml.safe_load(f)
-    spotify_session = open_spotify_session(config['spotify'])
+    ConfigHolder.load_config(args.config)
+
+    spotify_session = open_spotify_session(ConfigHolder.get_config()['spotify'])
     tidal_session = open_tidal_session()
     if not tidal_session.check_login():
         sys.exit("Could not connect to Tidal")
@@ -303,10 +317,10 @@ if __name__ == '__main__':
         spotify_playlist = spotify_session.playlist(args.uri)
         tidal_playlists = get_tidal_playlists_dict(tidal_session)
         tidal_playlist = pick_tidal_playlist_for_spotify_playlist(spotify_playlist, tidal_playlists)
-        sync_list(spotify_session, tidal_session, [tidal_playlist], config)
-    elif config.get('sync_playlists', None):
+        sync_list(spotify_session, tidal_session, [tidal_playlist])
+    elif ConfigHolder.get_config().get('sync_playlists', None):
         # if the config contains a sync_playlists list of mappings then use that
-        sync_list(spotify_session, tidal_session, get_playlists_from_config(config), config)
+        sync_list(spotify_session, tidal_session, get_playlists_from_config())
     else:
         # otherwise just use the user playlists in the Spotify account
-        sync_list(spotify_session, tidal_session, get_user_playlist_mappings(spotify_session, tidal_session, config), config)
+        sync_list(spotify_session, tidal_session, get_user_playlist_mappings(spotify_session, tidal_session))

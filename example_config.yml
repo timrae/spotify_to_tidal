@@ -4,6 +4,13 @@ spotify:
   username: your_spotify_username
   redirect_uri: http://localhost:8888/callback
 
+# patterns to exclude tracks from Tidal search when name matching against Spotify track
+exclusion_rules:
+  - instrumental
+  - acapella
+  - remix
+  - karaoke
+
 
 # uncomment this block if you want to only sync specific playlist IDs
 #sync_playlists:
