@@ -1,0 +1,24 @@
+[build-system]
+requires = ["setuptools >= 61.0", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "spotify_to_tidal"
+version = "0.1.0"
+requires-python = ">= 3.10"
+
+dependencies = [
+  "spotipy==2.21.0",
+  "tidalapi==0.7.3",
+  "pyyaml==6.0",
+  "tqdm==4.64.1",
+]
+
+
+[tools.setuptools.packages."spotify_to_tidal"]
+where = "src"
+include = "spotify_to_tidal*"
+
+[project.scripts]
+spotify_to_tidal = "spotify_to_tidal.__main__:main"
+

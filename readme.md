@@ -5,7 +5,8 @@ Installation
 Clone this git repository and then run:
 
 ```bash
-python3 -m pip install -r requirements.txt
+python3 -m pip install -e .
+spotify_to_tidal -h
 ```
 
 Setup
@@ -21,6 +22,8 @@ Usage
 To synchronize all of your Spotify playlists with your Tidal account run the following
 
 ```bash
+pip install -e .
+spotify_to_tidal
 python3 sync.py
 ```
 
@@ -29,7 +32,7 @@ This will take a long time because the Tidal API is really slow.
 You can also just synchronize a specific playlist by doing the following:
 
 ```bash
-python3 sync.py --uri 1ABCDEqsABCD6EaABCDa0a
+spotify_to_tidal --uri 1ABCDEqsABCD6EaABCDa0a
 ```
 
 See example_config.yml for more configuration options, and `sync.py --help` for more options.
